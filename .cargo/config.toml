@@ -1,0 +1,16 @@
+[target.thumbv7em-none-eabihf]
+runner = 'probe-run --chip STM32H723ZGTx'
+
+rustflags = [
+  # We use the Knurling project's "flip-link" crate for zero-cost stack overflow protection.
+  # If the stack overflows, the program will Hardfault, as opposed to run into undefined behavior.
+  # Note: flip-link only works with LDD for now.
+  # See: https://github.com/knurling-rs/flip-link
+  "-C", "linker=flip-link",
+]
+
+[build]
+target = "thumbv7em-none-eabihf" # Cortex-M4F and Cortex-M7F (with FPU)
+
+[env]
+DEFMT_LOG = "trace"
