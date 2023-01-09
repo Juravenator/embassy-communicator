@@ -17,6 +17,9 @@ run: ## flash to device and get logs
 probe: ## attach to device and get logs
 	probe-run --chip STM32H723ZGTx --no-flash target/thumbv7em-none-eabihf/release/${PROJECT_NAME}
 
+test: ## run tests
+	cargo test --test integration
+
 ##
 ### helper targets
 ##
