@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package api;
+
+message Error {
+    message Empty {}
+    oneof error {
+      Empty crc_mismatch = 1;
+      Empty unknown_api_version = 2;
+    }
+  }

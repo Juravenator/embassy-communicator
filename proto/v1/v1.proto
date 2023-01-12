@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package api.v1;
+
+// import "equalizer.proto";
+
+message Request {
+  message Empty {}
+  oneof request {
+    Empty getInfo = 1;
+    Empty getDsp = 2;
+    DspConfig configureDsp = 3;
+  }
+}
+
+message Response {
+  message Empty {}
+  uint32 nr = 1;
+  oneof response {
+    SysInfo info = 2;
+    DspState dsp = 3;
+    Empty UnknownV1Request = 4;
+  }
+}
+
+message SysInfo {
+  string serial_number = 1;
+  string firmware_version = 2;
+  string vendor = 3;
+  string product = 4;
+}
+
+message DspConfig {
+  uint32 sample_rate = 1;
+  uint32 block_size = 2;
+}
+
+message DspState {
+  DspConfig cfg = 1;
+  // api.v1.equalizer.Block eq = 2;
+}

@@ -2,13 +2,11 @@
 #![no_main]
 #![feature(type_alias_impl_trait)]
 
-mod proto;
-
 use atomic_enum::atomic_enum;
 use core::fmt;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU32, Ordering};
-use defmt::{trace, debug, error, info, panic, unwrap};
+use defmt::{debug, error, info, panic, unwrap};
 use embassy_executor::Spawner;
 use embassy_stm32::exti::ExtiInput;
 use embassy_stm32::gpio::{AnyPin, Input, Level, Output, Pin, Pull, Speed};
@@ -16,18 +14,12 @@ use embassy_stm32::peripherals::USB_OTG_HS;
 use embassy_stm32::time::mhz;
 use embassy_stm32::usb_otg::{Driver, Instance};
 use embassy_stm32::{interrupt, Config};
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 use embassy_usb::driver::EndpointError;
 use embassy_usb::{Builder, UsbDevice};
 use heapless::String;
 use {defmt_rtt as _, panic_probe as _};
-use aarch::crc::{CrcDecoder, CrcEncoder};
-use twpb::traits::{Writer};
-use crate::proto::error::Error;
-use crate::proto::v1::Response;    
-use crate::proto::{APIMessage, apimessage, v1};
-use twpb::{MessageDecoder, MessageEncoder};
 
 static BLINK_MS: AtomicU32 = AtomicU32::new(1000);
 static LED_SELECTED: AtomicSelectedLED = AtomicSelectedLED::new(SelectedLED::RED);
@@ -159,15 +151,12 @@ async fn task_usb_run() -> ! {
 
 #[embassy_executor::task]
 async fn task_usb_handle_connections() {
-    let class = unsafe { &mut *USB_CLASS.as_mut_ptr() };
+    let mut class = unsafe { &mut *USB_CLASS.as_mut_ptr() };
     loop {
         class.wait_connection().await;
         info!("Connected");
-        // let _ = echo(&mut class).await;
-        loop {
-            handle_proto_message(class).await;
-        }
-        // info!("Disconnected");
+        let _ = echo(&mut class).await;
+        info!("Disconnected");
     }
 }
 
@@ -182,7 +171,7 @@ async fn task_blink(_somenum: usize) {
             }
         };
         info!("blink high");
-        // unwrap!(usb_try_write(b"high").await);
+        unwrap!(usb_try_write(b"high").await);
         led.set_high();
         Timer::after(Duration::from_millis(
             BLINK_MS.load(Ordering::Relaxed).into(),
@@ -190,12 +179,29 @@ async fn task_blink(_somenum: usize) {
         .await;
 
         info!("blink low");
-        // unwrap!(usb_try_write(b"low").await);
+        unwrap!(usb_try_write(b"low").await);
         led.set_low();
         Timer::after(Duration::from_millis(
             BLINK_MS.load(Ordering::Relaxed).into(),
         ))
         .await;
+    }
+}
+
+#[embassy_executor::task]
+async fn task_low_prio() {
+    loop {
+        let start = Instant::now();
+        info!("[low] Starting long computation");
+
+        // Spin-wait to simulate a long CPU computation
+        cortex_m::asm::delay(64_000_000); // ~2 seconds
+
+        let end = Instant::now();
+        let ms = end.duration_since(start).as_ticks() / 33;
+        info!("[low] done in {} ms", ms);
+
+        Timer::after(Duration::from_ticks(32983)).await;
     }
 }
 
@@ -212,69 +218,14 @@ async fn usb_try_write(data: &[u8]) -> Result<bool, EndpointError> {
     }
 }
 
-async fn handle_proto_message<'d, T: Instance + 'd>(class: &mut CdcAcmClass<'d, Driver<'d, T>>) {
-    debug!("waiting for proto message");
-    let mut crc_in = CrcDecoder::<1024>::default();
-    let mut crc_out = CrcEncoder::<1024>::default();
-    let mut buf = [0u8; 256];
-
+async fn echo<'d, T: Instance + 'd>(
+    class: &mut CdcAcmClass<'d, Driver<'d, T>>,
+) -> Result<(), EndpointError> {
+    let mut buf = [0; 64];
     loop {
-        let n = unwrap!(class.read_packet(&mut buf).await);
-        debug!("usb packet read");
-        unwrap!(crc_in.write_all(&buf[0..n]));
-        debug!("crc decoded");
-        if crc_in.messages_in_queue() == 0 {
-            continue;
-        } else {
-            debug!("USB input buffer contains {} message(s)", crc_in.messages_in_queue());
-        }
-
-        let message = APIMessage::twpb_decode_iter(&mut crc_in.into_iter());
-        debug!("message decoded");
-        match message {
-            Err(err) => {
-                error!("error while parsing message: {}", err);
-            }
-            Ok(message) => {
-                debug!("constructing response");
-                let response = match message.content {
-                    Some(apimessage::Content::V1Request(message)) => match message.request {
-                        Some(v1::request::Request::GetInfo(_)) => {
-                            APIMessage { content: Some(proto::apimessage::Content::V1Response(Response{
-                                nr: 0,
-                                response: Some(v1::response::Response::Info(proto::v1::SysInfo{
-                                    serial:  heapless::String::from("some serial"),
-                                    firmware_version:  heapless::String::from("0.e.pi"),
-                                    vendor:  heapless::String::from("RoboCow"),
-                                    product:  heapless::String::from("Product"),
-                                })),
-                            })) }
-                        },
-                        _ => APIMessage { content: Some(proto::apimessage::Content::V1Response(Response{
-                            nr: 0,
-                            response: Some(v1::response::Response::UnknownV1Request(proto::v1::Empty{})),
-                        })) },
-                    }
-                    _ => APIMessage { content: Some(apimessage::Content::Error(Error{error: Some(proto::error::Errors::UnknownApiVersion(proto::error::EmptyError {  }))})) },
-                };
-
-                debug!("encoding response");
-                match response.twpb_encode(&mut crc_out).and_then(|_| crc_out.write_crc()) {
-                    Ok(_) => {
-                        debug!("sending response");
-                        let mut l = 0;
-                        for byte in &mut crc_out {
-                            trace!("writing byte to USB {:#04X}", byte);
-                            unwrap!(usb_try_write(&[byte]).await);
-                            l += 1;
-                        }
-                        debug!("written {} bytes to USB output", l);
-                    }
-                    Err(err) => {
-                        error!("failed to send response over USB. {}", err);
-                    },
-                }
-            }
-        }
+        let n = class.read_packet(&mut buf).await?;
+        let data = &buf[..n];
+        info!("data: {:x}", data);
+        class.write_packet(data).await?;
     }
 }

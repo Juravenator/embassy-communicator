@@ -1,0 +1,73 @@
+syntax = "proto3";
+
+package api.v1.equalizer;
+
+// // Equalizer block.
+// // TODO: how to make each of these individually accessible?
+// message Block {
+//   Config eq_cfg = 1;
+//   Section eq_section_0 = 2;
+//   Section eq_section_1 = 3;
+//   Section eq_section_2 = 4;
+//   Section eq_section_3 = 5;
+//   Section eq_section_4 = 6;
+//   Section eq_section_5 = 7;
+//   Section eq_section_6 = 8;
+//   Section eq_section_7 = 9;
+// }
+
+// // Equalizer block - general settings.
+// message Config {
+//   uint32 n_stages = 1;
+//   uint32 n_interpol_steps = 2;
+// }
+
+// // Equalizer block - section configuration.
+// message Section {
+//   // Filter type for this section.
+//   FilterType filter_type = 1;
+//   // Corner/center/shelf midpoint frequency in Hz.
+//   float f0 = 2;
+//   // The shape parameter is one of Q, octave bandwidth, or slope.
+//   FilterShapeType shape_type = 3;
+//   // The value for the chosen shape parameter.
+//   float shape_value = 4;
+//   // Gain for this section in dB.
+//   float gain = 5;
+// }
+
+// enum FilterType {
+//   /// Unity-gain bypass. Choosing this filter disables the filter section.
+//   /// Filter shape type and gain are ignored.
+//   Bypass = 0;
+//   /// All-pass filter.
+//   /// Supports Q and OBW (octave bandwidth). Gain is ignored.
+//   AllPass = 1;
+//   /// Low-pass filter.
+//   /// Supports Q and OBW (octave bandwidth). Gain is ignored.
+//   LowPass = 2;
+//   /// High-pass filter.
+//   /// Supports Q and OBW (octave bandwidth). Gain is ignored.
+//   HighPass = 3;
+//   /// Band-pass filter.
+//   /// Supports Q and OBW (octave bandwidth). Gain is ignored.
+//   BandPass = 4;
+//   /// Notch filter.
+//   /// Supports Q and OBW (octave bandwidth). Gain is ignored.
+//   Notch = 5;
+//   /// Peaking EQ filter.
+//   /// Supports Q and OBW (octave bandwidth). Gain is supported.
+//   PeakingEQ = 6;
+//   /// Low-shelf filter.
+//   /// Supports S (slope). Gain is supported.
+//   LowShelf = 7;
+//   /// High-shelf filter.
+//   /// Supports S (slope). Gain is supported.
+//   HighShelf = 8;
+// }
+
+// enum FilterShapeType {
+//   Q = 0;
+//   OctaveBandWidth = 1;
+//   Slope = 2;
+// }

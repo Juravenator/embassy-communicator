@@ -12,6 +12,15 @@ embassy-stm32 = { version = "0.1.0", git = "https://github.com/embassy-rs/embass
 embedded-io = { version = "0.4.0", features = ["async"] }
 embassy-usb = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy", rev = "88fd521b", features = ["defmt"] }
 
+# This doesn't quite work, and I'm not publishing to crates.io just yet.
+# twpb = { git = "https://github.com/Juravenator/rust_twpb.git" }
+# twpb_derive = { git = "https://github.com/Juravenator/rust_twpb.git" }
+twpb = { path = "/home/jura/git/twpb/twpb" }
+twpb_derive = { path = "/home/jura/git/twpb/twpb/twpb_derive" }
+
+aarch = { path = "aarch" }
+cobs = { version = "0.2.3", default-features = false }
+
 defmt = "0.3"
 defmt-rtt = "0.3"
 

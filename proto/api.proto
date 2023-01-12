@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package api;
+
+import "error.proto";
+import "v1/v1.proto";
+
+message Message {
+  oneof content {
+    api.Error error = 1;
+    api.v1.Request v1_request = 2;
+    api.v1.Response v1_response = 3;
+  }
+}
