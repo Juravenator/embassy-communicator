@@ -4,11 +4,11 @@
 #[defmt_test::tests]
 mod tests {
     use defmt::assert;
-    use embassy_stm32::{Peripherals};
-    use embassy_stm32::gpio::{Level, Output, Speed, Pin};
-    use embassy_time::{Duration, Timer, Delay};
-    use {defmt_rtt as _, panic_probe as _};
+    use embassy_stm32::gpio::{Level, Output, Pin, Speed};
+    use embassy_stm32::Peripherals;
+    use embassy_time::{Delay, Duration, Timer};
     use embedded_hal::blocking::delay::DelayMs;
+    use {defmt_rtt as _, panic_probe as _};
 
     #[init]
     fn init() -> Peripherals {

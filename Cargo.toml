@@ -5,11 +5,12 @@ version = "0.1.0"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-embassy-sync = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy", rev = "f339e85", features = ["defmt"] }
-embassy-executor = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy", rev = "f339e85", features = ["defmt", "integrated-timers"] }
-embassy-time = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy", rev = "f339e85", features = ["defmt", "defmt-timestamp-uptime", "unstable-traits", "tick-hz-32_768"] }
-embassy-stm32 = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy", rev = "f339e85", features = ["nightly", "defmt", "stm32h723zg", "time-driver-any", "exti", "unstable-pac", "unstable-traits"] }
+embassy-sync = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy", rev = "88fd521b", features = ["defmt"] }
+embassy-executor = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy", rev = "88fd521b", features = ["defmt", "integrated-timers"] }
+embassy-time = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy", rev = "88fd521b", features = ["defmt", "defmt-timestamp-uptime", "unstable-traits", "tick-hz-32_768"] }
+embassy-stm32 = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy", rev = "88fd521b", features = ["nightly", "defmt", "stm32h723zg", "time-driver-any", "exti", "unstable-pac", "unstable-traits"] }
 embedded-io = { version = "0.4.0", features = ["async"] }
+embassy-usb = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy", rev = "88fd521b", features = ["defmt"] }
 
 defmt = "0.3"
 defmt-rtt = "0.3"
@@ -29,6 +30,7 @@ micromath = "2.0.0"
 stm32-fmc = "0.2.4"
 embedded-storage = "0.3.0"
 static_cell = "1.0"
+atomic_enum = "0.2.0"
 
 [dev-dependencies]
 defmt-test = "0.3"
