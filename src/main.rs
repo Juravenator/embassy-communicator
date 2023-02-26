@@ -5,6 +5,7 @@
 mod proto;
 
 use atomic_enum::atomic_enum;
+use embassy_stm32::interrupt::InterruptExt;
 use core::fmt;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -15,6 +16,7 @@ use embassy_stm32::gpio::{AnyPin, Input, Level, Output, Pin, Pull, Speed};
 use embassy_stm32::peripherals::USB_OTG_HS;
 use embassy_stm32::time::mhz;
 use embassy_stm32::usb_otg::{Driver, Instance};
+use embassy_stm32::executor::{Executor, InterruptExecutor};
 use embassy_stm32::{interrupt, Config};
 use embassy_time::{Duration, Timer};
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
@@ -28,6 +30,7 @@ use crate::proto::error::Error;
 use crate::proto::v1::Response;    
 use crate::proto::{APIMessage, apimessage, v1};
 use twpb::{MessageDecoder, MessageEncoder};
+use static_cell::StaticCell;
 
 static BLINK_MS: AtomicU32 = AtomicU32::new(1000);
 static LED_SELECTED: AtomicSelectedLED = AtomicSelectedLED::new(SelectedLED::RED);
@@ -44,6 +47,8 @@ static mut USB_CTL_BUF: [u8; 64] = [0; 64];
 static mut USB_STATE: MaybeUninit<State> = MaybeUninit::uninit();
 static mut USB_CLASS: MaybeUninit<CdcAcmClass<Driver<USB_OTG_HS>>> = MaybeUninit::uninit();
 static mut USB_DEV: MaybeUninit<UsbDevice<Driver<USB_OTG_HS>>> = MaybeUninit::uninit();
+static EXECUTOR_HIGH: StaticCell<InterruptExecutor<interrupt::USART1>> = StaticCell::new();
+static EXECUTOR_MED: StaticCell<InterruptExecutor<interrupt::USART2>> = StaticCell::new();
 
 #[atomic_enum]
 #[derive(PartialEq)]
@@ -54,7 +59,7 @@ enum SelectedLED {
 }
 
 #[embassy_executor::main]
-async fn main(spawner: Spawner) {
+async fn main(spawner_low: Spawner) {
     info!("Initializing...");
     let mut config = Config::default();
     config.rcc.sys_ck = Some(mhz(400));
@@ -120,9 +125,20 @@ async fn main(spawner: Spawner) {
         USB_DEV.as_mut_ptr().write(builder.build());
     }
 
-    unwrap!(spawner.spawn(task_usb_run()));
-    unwrap!(spawner.spawn(task_usb_handle_connections()));
-    unwrap!(spawner.spawn(task_blink(42)));
+    let irq = interrupt::take!(USART1);
+    irq.set_priority(interrupt::Priority::P6);
+    let executor = EXECUTOR_HIGH.init(InterruptExecutor::new(irq));
+    let spawner_high = executor.start();
+
+    let irq = interrupt::take!(USART2);
+    irq.set_priority(interrupt::Priority::P7);
+    let executor = EXECUTOR_MED.init(InterruptExecutor::new(irq));
+    let spawner_med = executor.start();
+
+    unwrap!(spawner_high.spawn(run_high()));
+    unwrap!(spawner_med.spawn(task_usb_handle_connections()));
+    unwrap!(spawner_low.spawn(task_usb_run()));
+    unwrap!(spawner_low.spawn(task_blink(42)));
 
     let button = Input::new(board.PC13, Pull::None);
     let mut button = ExtiInput::new(button, board.EXTI13);
@@ -146,10 +162,6 @@ async fn main(spawner: Spawner) {
         }
     }
 }
-
-// static EXECUTOR_HIGH: StaticCell<InterruptExecutor<interrupt::EXTI1>> = StaticCell::new();
-// static EXECUTOR_MED: StaticCell<InterruptExecutor<interrupt::EXTI0>> = StaticCell::new();
-// static EXECUTOR_LOW: StaticCell<Executor> = StaticCell::new();
 
 #[embassy_executor::task]
 async fn task_usb_run() -> ! {
@@ -266,6 +278,7 @@ async fn handle_proto_message<'d, T: Instance + 'd>(class: &mut CdcAcmClass<'d, 
                         for byte in &mut crc_out {
                             trace!("writing byte to USB {:#04X}", byte);
                             unwrap!(usb_try_write(&[byte]).await);
+                            // Timer::after(Duration::from_millis(10)).await;
                             l += 1;
                         }
                         debug!("written {} bytes to USB output", l);
@@ -276,5 +289,13 @@ async fn handle_proto_message<'d, T: Instance + 'd>(class: &mut CdcAcmClass<'d, 
                 }
             }
         }
+    }
+}
+
+#[embassy_executor::task]
+async fn run_high() {
+    loop {
+        info!("        [high] tick!");
+        Timer::after(Duration::from_millis(250)).await;
     }
 }
