@@ -3,10 +3,12 @@
 #![feature(type_alias_impl_trait)]
 
 mod proto;
+mod storage;
 
 use atomic_enum::atomic_enum;
 use embassy_stm32::interrupt::InterruptExt;
-use core::fmt;
+use storage::PostError;
+use core::{fmt};
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU32, Ordering};
 use defmt::{trace, debug, error, info, panic, unwrap};
@@ -14,9 +16,10 @@ use embassy_executor::Spawner;
 use embassy_stm32::exti::ExtiInput;
 use embassy_stm32::gpio::{AnyPin, Input, Level, Output, Pin, Pull, Speed};
 use embassy_stm32::peripherals::USB_OTG_HS;
-use embassy_stm32::time::mhz;
+use embassy_stm32::time::{Hertz};
+use embassy_stm32::i2c::{I2c, TimeoutI2c};
 use embassy_stm32::usb_otg::{Driver, Instance};
-use embassy_stm32::executor::{Executor, InterruptExecutor};
+use embassy_stm32::executor::{InterruptExecutor};
 use embassy_stm32::{interrupt, Config};
 use embassy_time::{Duration, Timer};
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
@@ -26,9 +29,10 @@ use heapless::String;
 use {defmt_rtt as _, panic_probe as _};
 use aarch::crc::{CrcDecoder, CrcEncoder};
 use twpb::traits::{Writer};
-use crate::proto::error::Error;
+use crate::proto::error::Error as ProtoError;
 use crate::proto::v1::Response;    
 use crate::proto::{APIMessage, apimessage, v1};
+use crate::storage::AdafruitStorage;
 use twpb::{MessageDecoder, MessageEncoder};
 use static_cell::StaticCell;
 
@@ -62,9 +66,9 @@ enum SelectedLED {
 async fn main(spawner_low: Spawner) {
     info!("Initializing...");
     let mut config = Config::default();
-    config.rcc.sys_ck = Some(mhz(400));
-    config.rcc.hclk = Some(mhz(200));
-    config.rcc.pll1.q_ck = Some(mhz(100));
+    config.rcc.sys_ck = Some(Hertz::mhz(400));
+    config.rcc.hclk = Some(Hertz::mhz(200));
+    config.rcc.pll1.q_ck = Some(Hertz::mhz(100));
     let board = embassy_stm32::init(config);
 
     info!("Setting up I/O...");
@@ -124,6 +128,54 @@ async fn main(spawner_low: Spawner) {
         ));
         USB_DEV.as_mut_ptr().write(builder.build());
     }
+
+    let irq = interrupt::take!(I2C1_EV);
+    let mut i2c = I2c::new(
+        board.I2C1,
+        board.PB8,
+        board.PB9,
+        irq,
+        board.DMA1_CH4,
+        board.DMA1_CH5,
+        Hertz(100_000),
+        Default::default(),
+    );
+    let mut storage = AdafruitStorage::new(TimeoutI2c::new(&mut i2c, Duration::from_millis(1000)));
+    match storage.post().await {
+        Ok(s) => s,
+        Err(e) => {
+            let led = unsafe { &mut *LED_RED.as_mut_ptr() };
+            error!("Storage POST error! {}", e);
+            loop {
+                // 3 short blinks denotes a Storage error
+                for _ in 1..4 {
+                    led.set_high();
+                    Timer::after(Duration::from_millis(100)).await;
+                    led.set_low();
+                    Timer::after(Duration::from_millis(100)).await;
+                }
+
+                // extra blink codes for each error type
+                Timer::after(Duration::from_millis(500)).await;
+                let numblinks = match e {
+                    PostError::Nack => 1,
+                    PostError::Timeout => 2,
+                    PostError::FirstBlockNotWriteable => 3,
+                    PostError::SecondBlockNotWriteable => 4,
+                    PostError::Unknown => 5,
+                };
+                for _ in 1..numblinks + 1 {
+                    led.set_high();
+                    Timer::after(Duration::from_millis(100)).await;
+                    led.set_low();
+                    Timer::after(Duration::from_millis(100)).await;
+                }
+
+                // wait and repeat
+                Timer::after(Duration::from_secs(2)).await;
+            }
+        },
+    };
 
     let irq = interrupt::take!(USART1);
     irq.set_priority(interrupt::Priority::P6);
@@ -267,7 +319,7 @@ async fn handle_proto_message<'d, T: Instance + 'd>(class: &mut CdcAcmClass<'d, 
                             response: Some(v1::response::Response::UnknownV1Request(proto::v1::Empty{})),
                         })) },
                     }
-                    _ => APIMessage { content: Some(apimessage::Content::Error(Error{error: Some(proto::error::Errors::UnknownApiVersion(proto::error::EmptyError {  }))})) },
+                    _ => APIMessage { content: Some(apimessage::Content::Error(ProtoError{error: Some(proto::error::Errors::UnknownApiVersion(proto::error::EmptyError {  }))})) },
                 };
 
                 debug!("encoding response");
