@@ -150,9 +150,9 @@ async fn main(spawner_low: Spawner) {
                 // 3 short blinks denotes a Storage error
                 for _ in 1..4 {
                     led.set_high();
-                    Timer::after(Duration::from_millis(100)).await;
+                    Timer::after(Duration::from_millis(150)).await;
                     led.set_low();
-                    Timer::after(Duration::from_millis(100)).await;
+                    Timer::after(Duration::from_millis(150)).await;
                 }
 
                 // extra blink codes for each error type
@@ -166,9 +166,9 @@ async fn main(spawner_low: Spawner) {
                 };
                 for _ in 1..numblinks + 1 {
                     led.set_high();
-                    Timer::after(Duration::from_millis(100)).await;
+                    Timer::after(Duration::from_millis(150)).await;
                     led.set_low();
-                    Timer::after(Duration::from_millis(100)).await;
+                    Timer::after(Duration::from_millis(150)).await;
                 }
 
                 // wait and repeat
