@@ -49,13 +49,18 @@ impl<'d, T: Instance, TXDMA, RXDMA> AdafruitStorage<'d, T, TXDMA, RXDMA> {
     }
 
     // Address converted to a byte array to send to the i2c device.
-    fn addr_bytes(addr: u16) -> [u8; 2] {
-        addr.to_be_bytes()
+    // This includes the control byte, because it contains 3 bytes
+    // of addressing (for daisy chaining).
+    // See datasheet: 5.1 Contiguous Addressing Across Multiple Devices
+    fn addr_bytes(addr: u16) -> [u8; 3] {
+        let addr: [u8; 2] = addr.to_be_bytes();
+        let overflow = (addr[0] & 0b01110000) >> 4;
+        [BASE_EEPROM_I2C_ADDR | overflow, addr[0] & 0x0F, addr[1]]
     }
 
     pub async fn read(&mut self, addr: u16, mut bytes: &mut [u8]) -> Result<(), i2c::Error> {
         let addr_b = Self::addr_bytes(addr);
-        match self.i2c.blocking_write_read(BASE_EEPROM_I2C_ADDR, &addr_b, &mut bytes) {
+        match self.i2c.blocking_write_read(addr_b[0], &addr_b[1..], &mut bytes) {
             Ok(_) => {
                 trace!("Reading storage {:#06X}={:#04X}", addr, bytes);
                 Ok(())
@@ -78,7 +83,7 @@ impl<'d, T: Instance, TXDMA, RXDMA> AdafruitStorage<'d, T, TXDMA, RXDMA> {
             // No fancy stuff here like trying to blocking_write_read() to verify data right away.
             // This ack polling loop MUST be the control byte immediately followed by STOP, or
             // subsequent reads will start at address 0x0000 no matter what you do.
-            match self.i2c.blocking_write(BASE_EEPROM_I2C_ADDR, &[]) {
+            match self.i2c.blocking_write(bytes[0], &[]) {
                 Ok(()) => {
                     return Ok(())
                 },
@@ -113,8 +118,7 @@ impl<'d, T: Instance, TXDMA, RXDMA> AdafruitStorage<'d, T, TXDMA, RXDMA> {
             bytes = &bytes[chunk_size..];
 
             // Compose our write payload.
-            scratchspace[0] = BASE_EEPROM_I2C_ADDR;
-            scratchspace[1..3].clone_from_slice(&Self::addr_bytes(addr));
+            scratchspace[0..3].clone_from_slice(&Self::addr_bytes(addr));
             scratchspace[3..chunk_size+3].clone_from_slice(chunk);
             self.write_operation(&scratchspace[..chunk_size+3]).await?;
 
@@ -137,8 +141,7 @@ impl<'d, T: Instance, TXDMA, RXDMA> AdafruitStorage<'d, T, TXDMA, RXDMA> {
             let chunk_size = chunk.len();
 
             // Compose our write payload.
-            scratchspace[0] = BASE_EEPROM_I2C_ADDR;
-            scratchspace[1..3].clone_from_slice(&Self::addr_bytes(page_addr));
+            scratchspace[0..3].clone_from_slice(&Self::addr_bytes(page_addr));
             scratchspace[3..chunk_size+3].clone_from_slice(chunk);
             self.write_operation(&scratchspace[..chunk_size+3]).await?;
 
