@@ -160,9 +160,8 @@ async fn main(spawner_low: Spawner) {
                 let numblinks = match e {
                     PostError::Nack => 1,
                     PostError::Timeout => 2,
-                    PostError::FirstBlockNotWriteable => 3,
-                    PostError::SecondBlockNotWriteable => 4,
-                    PostError::Unknown => 5,
+                    PostError::Unknown => 3,
+                    PostError::BrokenChip(n) => 4 + n,
                 };
                 for _ in 1..numblinks + 1 {
                     led.set_high();
