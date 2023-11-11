@@ -14,7 +14,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use defmt::{trace, debug, error, info, unwrap};
 use embassy_executor::{Spawner, InterruptExecutor};
 use embassy_stm32::exti::ExtiInput;
-use embassy_stm32::gpio::{AnyPin, Input, Level, Output, Pin, Pull, Speed};
+use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
 use embassy_stm32::peripherals::{USB_OTG_HS, PB14, PB0, PE1};
 use embassy_stm32::time::Hertz;
 use embassy_stm32::i2c::I2c;
@@ -38,10 +38,6 @@ use twpb::{MessageDecoder, MessageEncoder};
 
 static BLINK_MS: AtomicU32 = AtomicU32::new(1000);
 static LED_SELECTED: AtomicSelectedLED = AtomicSelectedLED::new(SelectedLED::RED);
-
-static mut LED_RED: MaybeUninit<Output<'static, PB14>> = MaybeUninit::uninit();
-static mut LED_GREEN: MaybeUninit<Output<'static, PB0>> = MaybeUninit::uninit();
-static mut LED_YELLOW: MaybeUninit<Output<'static, PE1>> = MaybeUninit::uninit();
 
 static mut USB_OUT_BUF: [u8; 256] = [0; 256];
 static mut USB_DESC_BUF: [u8; 256] = [0; 256];
@@ -106,17 +102,9 @@ async fn main(spawner_low: Spawner) {
     let peripherals = embassy_stm32::init(config);
 
     info!("Setting up I/O...");
-    unsafe {
-        LED_RED
-            .as_mut_ptr()
-            .write(Output::new(peripherals.PB14, Level::Low, Speed::Low));
-        LED_GREEN
-            .as_mut_ptr()
-            .write(Output::new(peripherals.PB0, Level::Low, Speed::Low));
-        LED_YELLOW
-            .as_mut_ptr()
-            .write(Output::new(peripherals.PE1, Level::Low, Speed::Low));
-    }
+    let mut led_red = Output::new(peripherals.PB14, Level::Low, Speed::Low);
+    let led_green = Output::new(peripherals.PB0, Level::Low, Speed::Low);
+    let led_yellow = Output::new(peripherals.PE1, Level::Low, Speed::Low);
 
     debug!("Setting up USB...");
     let mut config = embassy_stm32::usb_otg::Config::default();
@@ -187,14 +175,13 @@ async fn main(spawner_low: Spawner) {
     match storage.post().await {
         Ok(s) => s,
         Err(e) => {
-            let led = unsafe { &mut *LED_RED.as_mut_ptr() };
             error!("Storage POST error! {}", e);
             loop {
                 // 3 short blinks denotes a Storage error
                 for _ in 1..4 {
-                    led.set_high();
+                    led_red.set_high();
                     Timer::after(Duration::from_millis(150)).await;
-                    led.set_low();
+                    led_red.set_low();
                     Timer::after(Duration::from_millis(150)).await;
                 }
 
@@ -207,9 +194,9 @@ async fn main(spawner_low: Spawner) {
                     PostError::BrokenChip(n) => 4 + n,
                 };
                 for _ in 1..numblinks + 1 {
-                    led.set_high();
+                    led_red.set_high();
                     Timer::after(Duration::from_millis(150)).await;
-                    led.set_low();
+                    led_red.set_low();
                     Timer::after(Duration::from_millis(150)).await;
                 }
 
@@ -230,7 +217,7 @@ async fn main(spawner_low: Spawner) {
     unwrap!(spawner_high.spawn(run_high()));
     unwrap!(spawner_med.spawn(task_usb_handle_connections()));
     unwrap!(spawner_low.spawn(task_usb_run()));
-    unwrap!(spawner_low.spawn(task_blink(42)));
+    unwrap!(spawner_low.spawn(task_blink(led_red, led_green, led_yellow)));
     info!("done setting up jobs");
 
     let button = Input::new(peripherals.PC13, Pull::None);
@@ -279,14 +266,20 @@ async fn task_usb_handle_connections() {
 }
 
 #[embassy_executor::task]
-async fn task_blink(_somenum: usize) {
+async fn task_blink(
+    led_red: Output<'static, PB14>,
+    led_green: Output<'static, PB0>,
+    led_yellow: Output<'static, PE1>
+) {
+    let mut led_red = led_red.degrade();
+    let mut led_green = led_green.degrade();
+    let mut led_yellow = led_yellow.degrade();
+
     loop {
-        let led = unsafe {
-            match LED_SELECTED.load(Ordering::Relaxed) {
-                SelectedLED::RED => &mut *LED_RED.as_mut_ptr(),
-                SelectedLED::GREEN => &mut *LED_GREEN.as_mut_ptr(),
-                SelectedLED::YELLOW => &mut *LED_YELLOW.as_mut_ptr(),
-            }
+        let led = match LED_SELECTED.load(Ordering::Relaxed) {
+            SelectedLED::RED => &mut led_red,
+            SelectedLED::GREEN => &mut led_green,
+            SelectedLED::YELLOW => &mut led_yellow,
         };
         info!("blink high");
         // unwrap!(usb_try_write(b"high").await);
