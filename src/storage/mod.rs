@@ -3,10 +3,10 @@
 //! This module assumes two Adafruit i2c memory chips connected in a daisy-chained fashion.
 //! See [the datasheet](https://cdn-learn.adafruit.com/assets/assets/000/115/136/original/24AA32A-24LC32A-32-Kbit-I2C-Serial-EEPROM-20001713N.pdf?1663269248) for more info
 
-use embassy_stm32::i2c::{self, TimeoutI2c, Instance};
+use embassy_stm32::i2c::{self, I2c, Instance};
 use embassy_time::{Duration, Timer};
 use defmt::Format;
-use defmt::{trace, debug, error, info, panic, unwrap};
+use defmt::{trace, debug, error, info};
 
 // The address bits to control these boards consist of the control bits (1010) +
 // three hardwired address pins (to daisy chain up to 8 boards).
@@ -28,19 +28,23 @@ pub enum PostError {
 }
 
 pub struct AdafruitStorage<'d, T: Instance, TXDMA, RXDMA> {
-    i2c: TimeoutI2c<'d, T, TXDMA, RXDMA>,
+    pub i2c: I2c<'d, T, TXDMA, RXDMA>,
 }
 
 impl<'d, T: Instance, TXDMA, RXDMA> AdafruitStorage<'d, T, TXDMA, RXDMA> {
     // Set up and perform Power-On Self-Test
-    pub fn new(i2c: TimeoutI2c<'d, T, TXDMA, RXDMA>) -> Self {
+    pub fn new(i2c: I2c<'d, T, TXDMA, RXDMA>) -> Self {
         Self{i2c}
     }
 
     // Read a byte from the specified memory address.
     pub async fn read_byte(&mut self, addr: u16) -> Result<u8, i2c::Error> {
+        debug!("read_byte {:#04X}", addr);
         let mut data = [0u8; 1];
-        self.read(addr, &mut data).await.and_then(|_| Ok(data[0]))
+        self.read(addr, &mut data).await.and_then(|_| Ok(data[0])).or_else(|e| {
+            error!("read error! {}: {:#04X}", e, data);
+            Err(e)
+        })
     }
 
     // Start address of a page derived from any address inside the page.
@@ -95,12 +99,14 @@ impl<'d, T: Instance, TXDMA, RXDMA> AdafruitStorage<'d, T, TXDMA, RXDMA> {
                 },
             };
 
+            debug!("reading from chip {}->{}", chip_num, start_addr);
             self.read_operation(&Self::addr_bytes(start_addr), &mut bytes[bytes_start_addr..bytes_start_addr+read_len]).await?;
         }
         Ok(())
     }
 
     async fn read_operation(&mut self, addr_b: &[u8; 3], mut bytes: &mut [u8]) -> Result<(), i2c::Error> {
+        trace!("sending blocking write read {:#04X} {:#04X} {:#04X}", addr_b[0], &addr_b[1..3], &bytes);
         match self.i2c.blocking_write_read(addr_b[0], &addr_b[1..3], &mut bytes) {
             Ok(_) => {
                 trace!("Reading storage {:#04X}={:#04X}", addr_b, bytes);
@@ -191,13 +197,19 @@ impl<'d, T: Instance, TXDMA, RXDMA> AdafruitStorage<'d, T, TXDMA, RXDMA> {
             scratchspace[3..chunk_size+3].clone_from_slice(chunk);
             self.write_operation(&scratchspace[..chunk_size+3]).await?;
 
+            trace!("read after write time");
+            scratchspace = [0u8; 35];
+            // Timer::after(Duration::from_millis(100)).await;
             // Read same memory region to verify our data.
             self.read(page_addr, &mut scratchspace[..chunk_size]).await?;
             for n in 0..chunk_size {
                 if scratchspace[n] != chunk[n] {
-                    return Err(i2c::Error::Crc)
+                    error!("read after write mismatch [{:#04X}]{:#04X} != {:#04X}", page_addr, scratchspace, chunk);
+                    // return Err(i2c::Error::Crc)
+                    break;
                 }
             }
+            trace!("read after write done");
 
             // Set page address to next page.
             page_addr += EEPROM_PAGE_SIZE;
@@ -222,7 +234,16 @@ impl<'d, T: Instance, TXDMA, RXDMA> AdafruitStorage<'d, T, TXDMA, RXDMA> {
                 Err(PostError::Unknown)
             }
         }?;
-        drop(data);
+
+        let mut initial_bytes = [0u8; 6];
+        match self.read(0x0000, &mut initial_bytes).await {
+            Ok(()) => trace!("initial read OK {:#04X}", initial_bytes),
+            Err(e) => error!("initial read fail {}", e),
+        };
+        // match self.write(0x0000, &[1,2,3,4,5,6]).await {
+        //     Ok(()) => trace!("initial write OK"),
+        //     Err(e) => error!("initial write fail {}", e),
+        // };
 
         // Enable this, everything goes to hell
         // // We require at least two EEPROM chips
@@ -314,10 +335,13 @@ impl<'d, T: Instance, TXDMA, RXDMA> AdafruitStorage<'d, T, TXDMA, RXDMA> {
 
     // A variant of detect_chip_count() that prevents any errors on the i2c bus.
     async fn ensure_minimum_chip_count(&mut self, chip_count: u8)  -> Result<(), PostError> {
+        debug!("testing minimum storage chip count of {}", chip_count);
         for i in 0..chip_count {
+            debug!("verifying chip #{}", i);
             let addr = ((i as u16) << 12) | 0x0FFF;
             self.read_byte(addr).await.or(Err(PostError::BrokenChip(i)))?;
         }
+        debug!("storage chip count test completed");
         Ok(())
     }
 

@@ -31,6 +31,7 @@ print("---")
 
 data_received = b''
 
+# ttyACM0 is probably your programming interface
 ser = serial.Serial('/dev/ttyACM1', 19200, timeout=1)
 
 writing_done = False

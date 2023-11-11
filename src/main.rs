@@ -6,21 +6,22 @@ mod proto;
 mod storage;
 
 use atomic_enum::atomic_enum;
-use embassy_stm32::interrupt::InterruptExt;
+use embassy_stm32::pac::Interrupt;
 use storage::PostError;
-use core::{fmt};
+use core::fmt;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU32, Ordering};
-use defmt::{trace, debug, error, info, panic, unwrap};
-use embassy_executor::Spawner;
+use defmt::{trace, debug, error, info, unwrap};
+use embassy_executor::{Spawner, InterruptExecutor};
 use embassy_stm32::exti::ExtiInput;
 use embassy_stm32::gpio::{AnyPin, Input, Level, Output, Pin, Pull, Speed};
-use embassy_stm32::peripherals::USB_OTG_HS;
-use embassy_stm32::time::{Hertz};
-use embassy_stm32::i2c::{I2c, TimeoutI2c};
+use embassy_stm32::peripherals::{USB_OTG_HS, PB14, PB0, PE1};
+use embassy_stm32::time::Hertz;
+use embassy_stm32::i2c::I2c;
 use embassy_stm32::usb_otg::{Driver, Instance};
-use embassy_stm32::executor::{InterruptExecutor};
-use embassy_stm32::{interrupt, Config};
+use embassy_stm32::{bind_interrupts, peripherals, usb_otg, i2c, Config};
+use embassy_stm32::interrupt;
+use embassy_stm32::interrupt::{InterruptExt, Priority};
 use embassy_time::{Duration, Timer};
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 use embassy_usb::driver::EndpointError;
@@ -28,20 +29,19 @@ use embassy_usb::{Builder, UsbDevice};
 use heapless::String;
 use {defmt_rtt as _, panic_probe as _};
 use aarch::crc::{CrcDecoder, CrcEncoder};
-use twpb::traits::{Writer};
+use twpb::traits::Writer;
 use crate::proto::error::Error as ProtoError;
-use crate::proto::v1::Response;    
+use crate::proto::v1::Response;
 use crate::proto::{APIMessage, apimessage, v1};
 use crate::storage::AdafruitStorage;
 use twpb::{MessageDecoder, MessageEncoder};
-use static_cell::StaticCell;
 
 static BLINK_MS: AtomicU32 = AtomicU32::new(1000);
 static LED_SELECTED: AtomicSelectedLED = AtomicSelectedLED::new(SelectedLED::RED);
 
-static mut LED_RED: MaybeUninit<Output<'static, AnyPin>> = MaybeUninit::uninit();
-static mut LED_GREEN: MaybeUninit<Output<'static, AnyPin>> = MaybeUninit::uninit();
-static mut LED_YELLOW: MaybeUninit<Output<'static, AnyPin>> = MaybeUninit::uninit();
+static mut LED_RED: MaybeUninit<Output<'static, PB14>> = MaybeUninit::uninit();
+static mut LED_GREEN: MaybeUninit<Output<'static, PB0>> = MaybeUninit::uninit();
+static mut LED_YELLOW: MaybeUninit<Output<'static, PE1>> = MaybeUninit::uninit();
 
 static mut USB_OUT_BUF: [u8; 256] = [0; 256];
 static mut USB_DESC_BUF: [u8; 256] = [0; 256];
@@ -51,8 +51,8 @@ static mut USB_CTL_BUF: [u8; 64] = [0; 64];
 static mut USB_STATE: MaybeUninit<State> = MaybeUninit::uninit();
 static mut USB_CLASS: MaybeUninit<CdcAcmClass<Driver<USB_OTG_HS>>> = MaybeUninit::uninit();
 static mut USB_DEV: MaybeUninit<UsbDevice<Driver<USB_OTG_HS>>> = MaybeUninit::uninit();
-static EXECUTOR_HIGH: StaticCell<InterruptExecutor<interrupt::USART1>> = StaticCell::new();
-static EXECUTOR_MED: StaticCell<InterruptExecutor<interrupt::USART2>> = StaticCell::new();
+static EXECUTOR_HIGH: InterruptExecutor = InterruptExecutor::new();
+static EXECUTOR_MED: InterruptExecutor = InterruptExecutor::new();
 
 #[atomic_enum]
 #[derive(PartialEq)]
@@ -62,39 +62,73 @@ enum SelectedLED {
     GREEN,
 }
 
+#[interrupt]
+unsafe fn USART1() {
+    EXECUTOR_HIGH.on_interrupt()
+}
+
+#[interrupt]
+unsafe fn USART2() {
+    EXECUTOR_MED.on_interrupt()
+}
+
+bind_interrupts!(struct Irqs {
+    OTG_HS => usb_otg::InterruptHandler<peripherals::USB_OTG_HS>;
+    I2C1_EV => i2c::InterruptHandler<peripherals::I2C1>;
+});
+
 #[embassy_executor::main]
 async fn main(spawner_low: Spawner) {
     info!("Initializing...");
+
     let mut config = Config::default();
-    config.rcc.sys_ck = Some(Hertz::mhz(400));
-    config.rcc.hclk = Some(Hertz::mhz(200));
-    config.rcc.pll1.q_ck = Some(Hertz::mhz(100));
-    let board = embassy_stm32::init(config);
+    {
+        use embassy_stm32::rcc::*;
+        config.rcc.hsi = Some(HSIPrescaler::DIV1);
+        config.rcc.csi = true;
+        config.rcc.hsi48 = true; // needed for USB
+        config.rcc.pll1 = Some(Pll {
+            source: PllSource::HSI,
+            prediv: PllPreDiv::DIV4,
+            mul: PllMul::MUL50,
+            divp: Some(PllDiv::DIV2),
+            divq: None,
+            divr: None,
+        });
+        config.rcc.sys = Sysclk::PLL1_P; // 400 Mhz
+        config.rcc.ahb_pre = AHBPrescaler::DIV2; // 200 Mhz
+        config.rcc.apb1_pre = APBPrescaler::DIV2; // 100 Mhz
+        config.rcc.apb2_pre = APBPrescaler::DIV2; // 100 Mhz
+        config.rcc.apb3_pre = APBPrescaler::DIV2; // 100 Mhz
+        config.rcc.apb4_pre = APBPrescaler::DIV2; // 100 Mhz
+        config.rcc.voltage_scale = VoltageScale::Scale1;
+    }
+    let peripherals = embassy_stm32::init(config);
 
     info!("Setting up I/O...");
     unsafe {
         LED_RED
             .as_mut_ptr()
-            .write(Output::new(board.PB14.degrade(), Level::Low, Speed::Low));
+            .write(Output::new(peripherals.PB14, Level::Low, Speed::Low));
         LED_GREEN
             .as_mut_ptr()
-            .write(Output::new(board.PB0.degrade(), Level::Low, Speed::Low));
+            .write(Output::new(peripherals.PB0, Level::Low, Speed::Low));
         LED_YELLOW
             .as_mut_ptr()
-            .write(Output::new(board.PE1.degrade(), Level::Low, Speed::Low));
+            .write(Output::new(peripherals.PE1, Level::Low, Speed::Low));
     }
 
     debug!("Setting up USB...");
-    let irq = interrupt::take!(OTG_HS);
-    let driver = unsafe {
-        Driver::new_fs(
-            board.USB_OTG_HS,
-            irq,
-            board.PA12,
-            board.PA11,
-            &mut USB_OUT_BUF,
-        )
-    };
+    let mut config = embassy_stm32::usb_otg::Config::default();
+    config.vbus_detection = true;
+    let driver = unsafe {Driver::new_fs(
+        peripherals.USB_OTG_HS,
+        Irqs,
+        peripherals.PA12,
+        peripherals.PA11,
+        &mut USB_OUT_BUF,
+        config
+    )};
 
     let mut config = embassy_usb::Config::new(0xc0de, 0xcafe);
     config.manufacturer = Some("Embassy");
@@ -115,7 +149,6 @@ async fn main(spawner_low: Spawner) {
             &mut USB_CONF_BUF,
             &mut USB_BOS_BUF,
             &mut USB_CTL_BUF,
-            None,
         )
     };
 
@@ -129,18 +162,28 @@ async fn main(spawner_low: Spawner) {
         USB_DEV.as_mut_ptr().write(builder.build());
     }
 
-    let irq = interrupt::take!(I2C1_EV);
-    let mut i2c = I2c::new(
-        board.I2C1,
-        board.PB8,
-        board.PB9,
-        irq,
-        board.DMA1_CH4,
-        board.DMA1_CH5,
+    let i2c = I2c::new(
+        peripherals.I2C1,
+        peripherals.PB8,
+        peripherals.PB9,
+        Irqs,
+        peripherals.DMA1_CH4,
+        peripherals.DMA1_CH5,
         Hertz(100_000),
         Default::default(),
     );
-    let mut storage = AdafruitStorage::new(TimeoutI2c::new(&mut i2c, Duration::from_millis(1000)));
+
+    let mut storage = AdafruitStorage::new(i2c);
+
+    match storage.read_byte(4096).await {
+        Ok(b) => info!("illegal read succeeded 4096={:#04X}", b),
+        Err(e) => error!("illegal read failed {}", e),
+    }
+    // match storage.i2c.write(0x55, &[0x00, 0x64]) {
+    //     Ok(()) => info!("illegal write success"),
+    //     Err(e) => error!("illegal write fail {}", e),
+    // };
+
     match storage.post().await {
         Ok(s) => s,
         Err(e) => {
@@ -176,27 +219,28 @@ async fn main(spawner_low: Spawner) {
         },
     };
 
-    let irq = interrupt::take!(USART1);
-    irq.set_priority(interrupt::Priority::P6);
-    let executor = EXECUTOR_HIGH.init(InterruptExecutor::new(irq));
-    let spawner_high = executor.start();
+    interrupt::USART1.set_priority(Priority::P6);
+    let spawner_high = EXECUTOR_HIGH.start(Interrupt::USART1);
 
-    let irq = interrupt::take!(USART2);
-    irq.set_priority(interrupt::Priority::P7);
-    let executor = EXECUTOR_MED.init(InterruptExecutor::new(irq));
-    let spawner_med = executor.start();
+    interrupt::USART2.set_priority(Priority::P7);
+    let spawner_med = EXECUTOR_MED.start(Interrupt::USART2);
 
+
+    info!("setting up jobs");
     unwrap!(spawner_high.spawn(run_high()));
     unwrap!(spawner_med.spawn(task_usb_handle_connections()));
     unwrap!(spawner_low.spawn(task_usb_run()));
     unwrap!(spawner_low.spawn(task_blink(42)));
+    info!("done setting up jobs");
 
-    let button = Input::new(board.PC13, Pull::None);
-    let mut button = ExtiInput::new(button, board.EXTI13);
+    let button = Input::new(peripherals.PC13, Pull::None);
+    let mut button = ExtiInput::new(button, peripherals.EXTI13);
+    info!("starting loop");
     loop {
         for colour in &[SelectedLED::RED, SelectedLED::YELLOW, SelectedLED::GREEN] {
             LED_SELECTED.store(*colour, Ordering::Relaxed);
             for speed in &[500, 100, 50, 1000] {
+                info!("waiting for button");
                 button.wait_for_rising_edge().await;
                 let mut msg = String::<50>::new();
                 if fmt::write(

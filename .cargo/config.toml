@@ -1,5 +1,5 @@
 [target.thumbv7em-none-eabihf]
-runner = 'probe-run --chip STM32H723ZGTx'
+runner = 'probe-rs-cli run --chip STM32H723ZGTx'
 
 rustflags = [
   # We use the Knurling project's "flip-link" crate for zero-cost stack overflow protection.
@@ -7,17 +7,6 @@ rustflags = [
   # Note: flip-link only works with LDD for now.
   # See: https://github.com/knurling-rs/flip-link
   "-C", "linker=flip-link",
-
-  # For defmt logging, we need to add this one:
-  # See: https://defmt.ferrous-systems.com/setup-app.html
-  "-C", "link-arg=-Tdefmt.x",
-  
-  # This is needed if your flash or ram addresses are not aligned to 0x10000 in memory.x
-  # See https://github.com/rust-embedded/cortex-m-quickstart/pull/95
-  "-C", "link-arg=--nmagic",
-
-  # LLD (shipped with the Rust toolchain) is used as the default linker
-  "-C", "link-arg=-Tlink.x",
 ]
 
 [build]
