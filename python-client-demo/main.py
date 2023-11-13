@@ -32,7 +32,12 @@ print("---")
 data_received = b''
 
 # ttyACM0 is probably your programming interface
-ser = serial.Serial('/dev/ttyACM1', 19200, timeout=1)
+
+# built-in USB port
+# ser = serial.Serial('/dev/ttyACM1', 19200, timeout=1)
+
+# UART over USB converter (boards RX,TX are next to pins A1,A2)
+ser = serial.Serial('/dev/ttyUSB0', 115200, timeout=1)
 
 writing_done = False
 while True:
