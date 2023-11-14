@@ -152,7 +152,7 @@ async fn main(spawner_low: Spawner) {
 
     let mut config = embassy_usb::Config::new(0xc0de, 0xcafe);
     config.manufacturer = Some("Embassy");
-    config.product = Some("USB-serial example");
+    config.product = Some("Embassy Communicator");
     config.serial_number = Some("12345678");
     // Required for Windows 7 compatiblity.
     // https://developer.nordicsemi.com/nRF_Connect_SDK/doc/1.9.1/kconfig/CONFIG_CDC_ACM_IAD.html#help
